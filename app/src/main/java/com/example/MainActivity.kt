@@ -119,104 +119,72 @@ class MainActivity : ComponentActivity() {
             // Set the global app context for Retrofit intercepting wrapper
             com.example.api.Firebase.appContext = applicationContext
 
-            // Initialize local Room Database with destructive migration allowance to prevent upgrade crashes
-            lifecycleScope.launch {
+            // Initialize local Room Database and Repository immediately in non-blocking background
+            try {
+                database = AppDatabase.getInstance(applicationContext)
+                repository = LocalRepository(database, applicationContext)
+                FocusTimerManager.init(applicationContext)
+                isDbReady.value = true
+            } catch (e: Throwable) {
+                e.printStackTrace()
+                startupException = e
+                isDbReady.value = true
+            }
+
+            // Run all heavy background initializations asynchronously without blocking the UI
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        // Initialize default app blocks and strict mode lists
-                        com.example.util.AppBlockHelper.initializeStrictAppsIfNeeded(applicationContext)
-                        
-                        // Initialize default update configuration in Firebase RTDB on first start
-                        try {
-                            com.example.util.AppUpdateManager.initializeDefaultUpdateConfigIfNeeded(applicationContext)
-                            com.example.util.SmartUpdateManager.init(applicationContext)
-                            com.example.util.SmartUpdateManager.checkForUpdates(applicationContext)
-                        } catch (e: Exception) {
-                            android.util.Log.e("MainActivity", "Failed to initialize default update config", e)
-                        }
-                        
-                        // Start the persistent keep alive daemon service if enabled
-                        val prefs = getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                        val customDbUrl = prefs.getString("custom_firebase_db_url", null)
-                        if (!customDbUrl.isNullOrBlank()) {
-                            com.example.api.Firebase.activeUrl = customDbUrl
-                        }
-                        if (prefs.getBoolean("keep_notification_enabled", true)) {
-                            com.example.service.KeepAliveService.start(applicationContext)
-                        }
-
-                        // Schedule bedtime reminder and wake-up alarm on app startup
-                        com.example.util.AlarmScheduler.scheduleBedtimeReminder(applicationContext)
-                        com.example.util.AlarmScheduler.scheduleWakeUpAlarm(applicationContext)
-
-                        database = AppDatabase.getInstance(applicationContext)
-                        repository = LocalRepository(database, applicationContext)
-
-                        // Initialize timer manager with context
-                        FocusTimerManager.init(applicationContext)
-
-                        // Run authoritative Read-Before-Write Boot Sequence
-                        try {
-                            com.example.api.OutboxDrainer.executeSafeBootSequence(applicationContext)
-                        } catch (e: Exception) {
-                            android.util.Log.e("MainActivity", "Safe boot sequence failed", e)
-                        }
-
-                        // Start real-time database queue outbox drainer
-                        com.example.api.OutboxDrainer.start(applicationContext)
-
-                        // Check for previously exported backups on first start and auto-restore
-                        try {
-                            val restored = com.example.util.DatabaseBackupHelper.autoRestoreIfNeeded(applicationContext, database)
-                            if (restored) {
-                                android.util.Log.i("MainActivity", "Successfully verified and auto-restored database from public storage.")
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.e("MainActivity", "Auto-restore logic failed", e)
-                        }
+                    // Initialize default app blocks and strict mode lists
+                    com.example.util.AppBlockHelper.initializeStrictAppsIfNeeded(applicationContext)
+                    
+                    // Initialize default update configuration in Firebase RTDB on first start
+                    try {
+                        com.example.util.AppUpdateManager.initializeDefaultUpdateConfigIfNeeded(applicationContext)
+                        com.example.util.SmartUpdateManager.init(applicationContext)
+                        com.example.util.SmartUpdateManager.checkForUpdates(applicationContext)
+                    } catch (e: Exception) {
+                        android.util.Log.e("MainActivity", "Failed to initialize default update config", e)
+                    }
+                    
+                    // Start the persistent keep alive daemon service if enabled
+                    val prefs = getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                    val customDbUrl = prefs.getString("custom_firebase_db_url", null)
+                    if (!customDbUrl.isNullOrBlank()) {
+                        com.example.api.Firebase.activeUrl = customDbUrl
+                    }
+                    if (prefs.getBoolean("keep_notification_enabled", true)) {
+                        com.example.service.KeepAliveService.start(applicationContext)
                     }
 
-                    // Track screen changes dynamically to trigger/hide floating overlay
-                    lifecycleScope.launch {
-                        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
-                            viewModel.currentScreen.collect { screen ->
-                                FocusTimerManager.setTimerScreenActiveState(this@MainActivity, screen == Screen.TIMER)
-                            }
-                        }
+                    // Schedule bedtime reminder and wake-up alarm on app startup
+                    com.example.util.AlarmScheduler.scheduleBedtimeReminder(applicationContext)
+                    com.example.util.AlarmScheduler.scheduleWakeUpAlarm(applicationContext)
+
+                    // Run authoritative Read-Before-Write Boot Sequence
+                    try {
+                        com.example.api.OutboxDrainer.executeSafeBootSequence(applicationContext)
+                    } catch (e: Exception) {
+                        android.util.Log.e("MainActivity", "Safe boot sequence failed", e)
                     }
 
-                    // Handle auto-navigation if launched with SHOW_TIMER_PAGE parameter
-                    checkTimerNavigation(intent)
-                    checkAppBlockInterceptions(intent)
-                    handleDeepLink(intent)
-                    performLaunchRedirectionCheck()
+                    // Start real-time database queue outbox drainer
+                    com.example.api.OutboxDrainer.start(applicationContext)
+
+                    // Check for previously exported backups on first start and auto-restore
+                    try {
+                        val restored = com.example.util.DatabaseBackupHelper.autoRestoreIfNeeded(applicationContext, database)
+                        if (restored) {
+                            android.util.Log.i("MainActivity", "Successfully verified and auto-restored database from public storage.")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("MainActivity", "Auto-restore logic failed", e)
+                    }
 
                     // Trigger authoritative boot gate verification
                     viewModel.verifyCloudStateAndReleaseGate(applicationContext)
 
-                    // Register Network Reconnection Event Listener
-                    try {
-                        val connectivityManager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-                        val networkRequest = android.net.NetworkRequest.Builder()
-                            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                            .build()
-                        connectivityManager.registerNetworkCallback(networkRequest, object : android.net.ConnectivityManager.NetworkCallback() {
-                            private var isFirstCallback = true
-                            override fun onAvailable(network: android.net.Network) {
-                                if (isFirstCallback) {
-                                    isFirstCallback = false
-                                    return // ignore the initial callback upon registration
-                                }
-                                android.util.Log.i("MainActivity", "Network Reconnection Event: Transited from OFFLINE to ONLINE status.")
-                                triggerFocusReconciliation()
-                            }
-                        })
-                    } catch (e: Exception) {
-                        android.util.Log.e("MainActivity", "Failed to register network callback: ${e.message}", e)
-                    }
-
                     // Auto-sync Pull (Restore) and then Push (Backup) when app opened
-                    if (com.example.util.GoogleDriveSyncManager.hasDrivePermission(applicationContext) && ::database.isInitialized) {
+                    if (com.example.util.GoogleDriveSyncManager.hasDrivePermission(applicationContext)) {
                         try {
                             android.util.Log.i("MainActivity", "Auto Google Drive sync (Pull & Push) starting on app open...")
                             // Pull / Restore
@@ -229,13 +197,45 @@ class MainActivity : ComponentActivity() {
                             android.util.Log.e("MainActivity", "Auto Google Drive sync failed on open: ${e.message}", e)
                         }
                     }
-
-                    isDbReady.value = true
                 } catch (e: Throwable) {
                     e.printStackTrace()
-                    startupException = e
-                    isDbReady.value = true
                 }
+            }
+
+            // Track screen changes dynamically to trigger/hide floating overlay
+            lifecycleScope.launch {
+                lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                    viewModel.currentScreen.collect { screen ->
+                        FocusTimerManager.setTimerScreenActiveState(this@MainActivity, screen == Screen.TIMER)
+                    }
+                }
+            }
+
+            // Handle auto-navigation if launched with SHOW_TIMER_PAGE parameter
+            checkTimerNavigation(intent)
+            checkAppBlockInterceptions(intent)
+            handleDeepLink(intent)
+            performLaunchRedirectionCheck()
+
+            // Register Network Reconnection Event Listener
+            try {
+                val connectivityManager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                val networkRequest = android.net.NetworkRequest.Builder()
+                    .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build()
+                connectivityManager.registerNetworkCallback(networkRequest, object : android.net.ConnectivityManager.NetworkCallback() {
+                    private var isFirstCallback = true
+                    override fun onAvailable(network: android.net.Network) {
+                        if (isFirstCallback) {
+                            isFirstCallback = false
+                            return // ignore the initial callback upon registration
+                        }
+                        android.util.Log.i("MainActivity", "Network Reconnection Event: Transited from OFFLINE to ONLINE status.")
+                        triggerFocusReconciliation()
+                    }
+                })
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Failed to register network callback: ${e.message}", e)
             }
         } catch (e: Throwable) {
             e.printStackTrace()

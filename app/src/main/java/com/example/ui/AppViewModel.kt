@@ -2714,6 +2714,31 @@ class AppViewModel(
                 Log.e("AppViewModel", "Failed to save profile to Firestore", e)
             }
             
+            // Also write to RTDB immediately so other users/devices see it in real-time
+            try {
+                val dbUrl = com.example.api.FirebaseConfig.getDatabaseUrl(getApplication())
+                if (!dbUrl.isNullOrBlank()) {
+                    val sanitized = com.example.api.DevicePresenceManager.sanitizeEmail(email)
+                    val rtdb = com.google.firebase.database.FirebaseDatabase.getInstance(dbUrl)
+                    val arenaRef = rtdb.getReference("FOCUS_TIMMER")
+                        .child("USER")
+                        .child(sanitized)
+                        .child("ARENA")
+                    arenaRef.child("DisplayName").setValue(nickname.ifEmpty { name })
+                    arenaRef.child("CustomEmoji").setValue(emoji)
+                    
+                    // Also update under general timer location if exists
+                    val timerRef = rtdb.getReference("FOCUS_TIMMER")
+                        .child("USER")
+                        .child(sanitized)
+                        .child("ACTIVE_FOCUS_TIMER")
+                    timerRef.child("User_Display_Name").setValue(nickname.ifEmpty { name })
+                    timerRef.child("User_Emoji").setValue(emoji)
+                }
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "Failed to write profile to RTDB immediately", e)
+            }
+            
             if (areMandatoryPermissionsGranted()) {
                 navigateTo(getDefaultScreen())
             } else {
@@ -3705,6 +3730,16 @@ class AppViewModel(
         val isTimerOnOrActive = isTimerRunning.value && FocusTimerManager.isFocusPhase.value
         if (isTimerOnOrActive) return
         
+        if (attachedTag.value.isBlank()) {
+            _showTagSelectionDialog.value = true
+            android.widget.Toast.makeText(
+                getApplication(),
+                "Please tag a subject before starting your focus session!",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        
         viewModelScope.launch {
             val username = _currentUsername.value ?: ""
             val email = if (_userEmail.value.isNotEmpty()) _userEmail.value else if (username.contains("@")) username else prefs.getString("user_email_${username}", "") ?: ""
@@ -3908,6 +3943,16 @@ class AppViewModel(
         takeCommandDevice()
         val isStopwatchOnOrActive = isStopwatchActive.value && isFocusPhase.value
         if (isStopwatchOnOrActive) return
+        
+        if (attachedTag.value.isBlank()) {
+            _showTagSelectionDialog.value = true
+            android.widget.Toast.makeText(
+                getApplication(),
+                "Please tag a subject before starting your focus session!",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
         
         viewModelScope.launch {
             val username = _currentUsername.value ?: ""

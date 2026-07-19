@@ -260,6 +260,11 @@ object ArenaLeaderboardEngine {
                             val displayName = if (!rawName.isNullOrBlank()) rawName else email.substringBefore("@")
 
                             val rawEmoji = arenaSnapshot.child("CustomEmoji").getValue(String::class.java)
+                                ?: arenaSnapshot.child("ProfileUrl").getValue(String::class.java)
+                                ?: arenaSnapshot.child("ProfilePictureUrl").getValue(String::class.java)
+                                ?: arenaSnapshot.child("profile_url").getValue(String::class.java)
+                                ?: arenaSnapshot.child("avatar_url").getValue(String::class.java)
+                                ?: arenaSnapshot.child("AvatarUrl").getValue(String::class.java)
                                 ?: (if (email == myEmail) {
                                     val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
                                     val username = prefs.getString("current_username", "") ?: ""

@@ -295,17 +295,11 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
         completedTodaySecs + pendingSecs + activeSecs
     }
 
-    val currentMeEmail = remember(userEmail) { userEmail.lowercase().trim() }
     val leaderboard by com.example.api.ArenaLeaderboardEngine.leaderboardFlow.collectAsStateWithLifecycle(emptyList())
-    val myLeaderboardPeer = remember(leaderboard, currentMeEmail) {
-        leaderboard.find { it.email.lowercase().trim() == currentMeEmail }
+    val myLeaderboardPeer = remember(leaderboard) {
+        leaderboard.find { it.isMe }
     }
-    val historyRecords by viewModel.allHistoryVault.collectAsStateWithLifecycle(initialValue = emptyList())
-    val activeStreak = remember(historyRecords, myLeaderboardPeer) {
-        val myLocalStreak = com.example.api.AnalyticsVaultEngine.calculateDailyConsistencyStreak(context, historyRecords)
-        if (myLocalStreak > 0) myLocalStreak else (myLeaderboardPeer?.activeStreak ?: 0)
-    }
-    val myXp = remember(globalTodaySeconds, leaderboard, myLeaderboardPeer) {
+    val myXp = remember(globalTodaySeconds, myLeaderboardPeer) {
         val baseServerXp = myLeaderboardPeer?.xpScore ?: 0
         baseServerXp + (globalTodaySeconds * 1000L / 60000L / 15L).toInt()
     }
@@ -647,7 +641,8 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                         isImmersive = false,
                         isAntiBurnCenteredByTap = true,
                         globalTodaySeconds = globalTodaySeconds,
-                        focusTimerDurationMins = focusTimerDurationMins
+                        focusTimerDurationMins = focusTimerDurationMins,
+                        myXp = myXp
                     )
                 }
             }
@@ -3476,7 +3471,7 @@ fun TimerHistoryView(
                             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF1F1F24)))
 
                             // Local Device Row
-                            val localFocusSecs = com.example.util.FocusTimerManager.getTodayFocusSeconds()
+                            val localFocusSecs = if (selectedDateStr == todayStr) myTodaySeconds else com.example.util.FocusTimerManager.getTodayFocusSeconds()
                             val localFocusMins = localFocusSecs / 60
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -3527,12 +3522,20 @@ fun TimerHistoryView(
                             var mismatchDetected = false
                             var otherDeviceUploading = false
 
-                            val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                            val todayStr = sdf.format(java.util.Date())
+                            val calYesterday = java.util.Calendar.getInstance()
+                            calYesterday.add(java.util.Calendar.DAY_OF_YEAR, -1)
+                            val yesterdayStr = sdf.format(calYesterday.time)
+                            val calTomorrow = java.util.Calendar.getInstance()
+                            calTomorrow.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                            val tomorrowStr = sdf.format(calTomorrow.time)
+
                             devicesMap.forEach { (deviceId, stats) ->
                                 val myDeviceModel = com.example.util.DeviceIdProvider.getDeviceId(context)
                                 if (deviceId != myDeviceModel) {
-                                    val isToday = stats.lastUpdateDate == todayStr
-                                    val remoteFocusMins = if (isToday) stats.todayFocusMs / 1000 / 60 else 0L
+                                    val isWithinActiveCycle = stats.lastUpdateDate == todayStr || stats.lastUpdateDate == yesterdayStr || stats.lastUpdateDate == tomorrowStr
+                                    val remoteFocusMins = if (isWithinActiveCycle) stats.todayFocusMs / 1000 / 60 else 0L
                                     val isLoggedIn = stats.isLoggedIn ?: true
 
                                     // Filter out disconnected stale devices with 0 focus minutes
@@ -4936,22 +4939,11 @@ fun TimerLiveControlContent(
     isAntiBurnCenteredByTap: Boolean,
     globalTodaySeconds: Int,
     focusTimerDurationMins: Int,
+    myXp: Int,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val WaterBlue = Color(0xFF38BDF8)
 
-    val userEmail by viewModel.userEmail.collectAsStateWithLifecycle()
-    val currentMeEmail = remember(userEmail) { userEmail.lowercase().trim() }
-    val leaderboard by com.example.api.ArenaLeaderboardEngine.leaderboardFlow.collectAsStateWithLifecycle(emptyList())
-    val myLeaderboardPeer = remember(leaderboard, currentMeEmail) {
-        leaderboard.find { it.email.lowercase().trim() == currentMeEmail }
-    }
-    val historyRecords by viewModel.allHistoryVault.collectAsStateWithLifecycle(initialValue = emptyList())
-    val activeStreak = remember(historyRecords, myLeaderboardPeer) {
-        val myLocalStreak = com.example.api.AnalyticsVaultEngine.calculateDailyConsistencyStreak(context, historyRecords)
-        if (myLocalStreak > 0) myLocalStreak else (myLeaderboardPeer?.activeStreak ?: 0)
-    }
     val pendingFocusReview by viewModel.pendingFocusReview.collectAsStateWithLifecycle()
 
     val sleepMinutes = 8 * 60
@@ -4982,9 +4974,8 @@ fun TimerLiveControlContent(
     val selectedTask by viewModel.attachedTask.collectAsStateWithLifecycle()
     val sessionStartTimestamp by viewModel.sessionStartTimestamp.collectAsStateWithLifecycle()
 
-    val myXp = remember(globalTodaySeconds, leaderboard, myLeaderboardPeer) {
-        val baseServerXp = myLeaderboardPeer?.xpScore ?: 0
-        baseServerXp + (globalTodaySeconds * 1000L / 60000L / 15L).toInt()
+    val todayXp = remember(globalTodaySeconds) {
+        (globalTodaySeconds * 1000L / 60000L / 15L).toInt()
     }
 
     Card(
@@ -5127,6 +5118,13 @@ fun TimerLiveControlContent(
                             color = if (myXp < 0) Color(0xFFEF4444) else Color(0xFFFFB300),
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 18.sp
+                        )
+                        Spacer(modifier = Modifier.height(1.dp))
+                        Text(
+                            text = "(+$todayXp today)",
+                            color = Color(0xFF81C784),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -5502,6 +5500,13 @@ fun TimerLiveControlContent(
                                 color = if (myXp < 0) Color(0xFFEF4444) else Color(0xFFFFB300),
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 18.sp
+                            )
+                            Spacer(modifier = Modifier.height(1.dp))
+                            Text(
+                                text = "(+$todayXp today)",
+                                color = Color(0xFF81C784),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }

@@ -10097,7 +10097,7 @@ fun SettingsUserInfoPage(
                     fallback = nickname.take(2).uppercase().ifEmpty { name.take(2).uppercase() }
                 )
                 Text(
-                    text = "Profile picture is configured under the Arena tab as a Custom Emoji Link.",
+                    text = "Configure your profile name, nickname, and custom avatar image URL or emoji link below.",
                     color = Color.Gray,
                     fontSize = 12.sp,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -10121,6 +10121,19 @@ fun SettingsUserInfoPage(
                     value = nickname,
                     onValueChange = { nickname = it },
                     label = { Text("Nickname", color = Color.Gray) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = WaterBlue,
+                        unfocusedBorderColor = Color(0xFF333333)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = emoji,
+                    onValueChange = { emoji = it },
+                    label = { Text("Profile Picture URL / Custom Emoji Link", color = Color.Gray) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,

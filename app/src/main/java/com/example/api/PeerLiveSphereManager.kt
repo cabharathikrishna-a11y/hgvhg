@@ -178,6 +178,11 @@ object PeerLiveSphereManager {
                                 ?: getFallbackDisplayName(friendId)
 
                             val emojiVal = arenaSnapshot.child("CustomEmoji").getValue(String::class.java)
+                                ?: arenaSnapshot.child("ProfileUrl").getValue(String::class.java)
+                                ?: arenaSnapshot.child("ProfilePictureUrl").getValue(String::class.java)
+                                ?: arenaSnapshot.child("profile_url").getValue(String::class.java)
+                                ?: arenaSnapshot.child("avatar_url").getValue(String::class.java)
+                                ?: arenaSnapshot.child("AvatarUrl").getValue(String::class.java)
                                 ?: timerSnapshot.child("User_Emoji").getValue(String::class.java)
                                 ?: timerSnapshot.child("emoji").getValue(String::class.java)
                                 ?: ""
