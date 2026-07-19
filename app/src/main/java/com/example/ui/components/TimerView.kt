@@ -254,12 +254,30 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     // Milestone & Dialog States
     val focusRankPopup by viewModel.focusRankPopup.collectAsStateWithLifecycle()
 
+    val allUsers by viewModel.allUsers.collectAsStateWithLifecycle()
+    val currentUsername by viewModel.currentUsername.collectAsStateWithLifecycle()
+    val userEmail by viewModel.userEmail.collectAsStateWithLifecycle()
+
     // Dynamically calculate focus metrics
-    val completedTodaySecs = remember(focusRecords, adoptedTodayMs) {
+    val completedTodaySecs = remember(focusRecords, allUsers, userEmail, currentUsername) {
         val systemTodayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
         val localSecs = focusRecords.sumOf { com.example.util.FocusTimerManager.getOverlapSecondsForDate(it, systemTodayStr) }
-        val adoptedSecs = (adoptedTodayMs / 1000).toInt()
-        localSecs + adoptedSecs
+        
+        val cleanMeEmail = userEmail.lowercase().trim()
+        val meUser = if (cleanMeEmail.isNotEmpty()) {
+            allUsers[cleanMeEmail]
+        } else {
+            currentUsername?.let { allUsers[it.lowercase().trim()] }
+        }
+        val devicesMap = meUser?.devices ?: emptyMap()
+        
+        val currentDeviceKey = com.example.util.DeviceIdProvider.getDeviceId(context)
+        val maxOtherDeviceTodayMs = devicesMap.filterKeys { it != currentDeviceKey }.values
+            .filter { it.lastUpdateDate == systemTodayStr }
+            .maxOfOrNull { it.todayFocusMs } ?: 0L
+        val maxOtherDeviceTodaySecs = (maxOtherDeviceTodayMs / 1000L).toInt()
+        
+        maxOf(localSecs, maxOtherDeviceTodaySecs)
     }
 
     val pendingSecs = remember(pendingFocusReview) {
@@ -277,7 +295,6 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
         completedTodaySecs + pendingSecs + activeSecs
     }
 
-    val userEmail by viewModel.userEmail.collectAsStateWithLifecycle()
     val currentMeEmail = remember(userEmail) { userEmail.lowercase().trim() }
     val leaderboard by com.example.api.ArenaLeaderboardEngine.leaderboardFlow.collectAsStateWithLifecycle(emptyList())
     val myLeaderboardPeer = remember(leaderboard, currentMeEmail) {

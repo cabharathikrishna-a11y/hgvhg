@@ -155,27 +155,23 @@ object DevicePresenceManager {
                     }
                 }
 
-                if (maxOtherTodayFocusMs > 0L) {
-                    val db = com.example.data.AppDatabase.getInstance(context)
-                    val allHistory = db.localHistoryVaultDao().getAllHistoryDirect()
-                    var localTodayFocusMs = 0L
-                    for (record in allHistory) {
-                        if (record.date_string == todayStr) {
-                            localTodayFocusMs += record.total_focus_ms
-                        }
-                    }
-
-                    if (maxOtherTodayFocusMs > localTodayFocusMs) {
-                        val adoptedTodayMs = maxOtherTodayFocusMs - localTodayFocusMs
-                        val appPrefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-                        appPrefs.edit()
-                            .putLong("adopted_today_ms_${sanitizedEmail}", adoptedTodayMs)
-                            .apply()
-
-                        com.example.util.FocusTimerManager.setAdoptedTodayMs(adoptedTodayMs)
-                        Log.d(TAG, "Adopted higher today's focus time from other device: $adoptedTodayMs ms")
+                val db = com.example.data.AppDatabase.getInstance(context)
+                val allHistory = db.localHistoryVaultDao().getAllHistoryDirect()
+                var localTodayFocusMs = 0L
+                for (record in allHistory) {
+                    if (record.date_string == todayStr) {
+                        localTodayFocusMs += record.total_focus_ms
                     }
                 }
+
+                val adoptedTodayMs = maxOf(0L, maxOtherTodayFocusMs - localTodayFocusMs)
+                val appPrefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+                appPrefs.edit()
+                    .putLong("adopted_today_ms_${sanitizedEmail}", adoptedTodayMs)
+                    .apply()
+
+                com.example.util.FocusTimerManager.setAdoptedTodayMs(adoptedTodayMs)
+                Log.d(TAG, "Adopted higher today's focus time recalculation: $adoptedTodayMs ms (maxOtherToday: $maxOtherTodayFocusMs, localToday: $localTodayFocusMs)")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error adopting highest today focus time from other devices", e)
@@ -190,6 +186,7 @@ object DevicePresenceManager {
         if (email.isBlank()) return
         
         try {
+            adoptHighestTodayFocusMsFromOtherDevices(context, email)
             val db = com.example.data.AppDatabase.getInstance(context)
             val allHistory = db.localHistoryVaultDao().getAllHistoryDirect()
             

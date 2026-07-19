@@ -696,6 +696,17 @@ object DynamicCommandManager {
                     }
                 }
             }
+
+            // Trigger dynamic focus stats update on secondary device to sync with RTDB live
+            if (activeEmail.isNotBlank()) {
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    try {
+                        DevicePresenceManager.updateDeviceFocusStats(context, activeEmail)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error updating device focus stats in calibrateLocalState", e)
+                    }
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error during local state calibration", e)
         } finally {
