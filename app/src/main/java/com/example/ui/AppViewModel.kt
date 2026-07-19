@@ -183,28 +183,19 @@ class AppViewModel(
 
     private var lastAutoAuditDevicesHash: String? = null
 
-    private val _isCloudStateVerified = MutableStateFlow(false)
+    private val _isCloudStateVerified = MutableStateFlow(true)
     val isCloudStateVerified: StateFlow<Boolean> = _isCloudStateVerified.asStateFlow()
 
     fun verifyCloudStateAndReleaseGate(context: android.content.Context) {
-        // Enforce a maximum timeout of 1.5 seconds (1500 ms) so the user is never stuck
-        viewModelScope.launch {
-            kotlinx.coroutines.delay(1500)
-            if (!_isCloudStateVerified.value) {
-                android.util.Log.i("AppViewModel", "Cloud session verification timed out. Forcing boot gate release.")
-                _isCloudStateVerified.value = true
-            }
-        }
-        viewModelScope.launch {
-            val username = currentUsername.value
-            try {
-                if (!username.isNullOrBlank()) {
+        _isCloudStateVerified.value = true
+        val username = currentUsername.value
+        if (!username.isNullOrBlank()) {
+            viewModelScope.launch {
+                try {
                     com.example.api.Firebase.verifyCloudState(context, username)
+                } catch (e: Exception) {
+                    android.util.Log.e("AppViewModel", "verifyCloudState failed during boot gate", e)
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("AppViewModel", "verifyCloudState failed during boot gate", e)
-            } finally {
-                _isCloudStateVerified.value = true
             }
         }
     }
