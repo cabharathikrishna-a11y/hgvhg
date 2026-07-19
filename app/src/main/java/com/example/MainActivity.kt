@@ -125,6 +125,8 @@ class MainActivity : ComponentActivity() {
                 repository = LocalRepository(database, applicationContext)
                 FocusTimerManager.init(applicationContext)
                 isDbReady.value = true
+                // Trigger authoritative boot gate verification immediately after local DB is ready
+                viewModel.verifyCloudStateAndReleaseGate(applicationContext)
             } catch (e: Throwable) {
                 e.printStackTrace()
                 startupException = e
@@ -179,9 +181,6 @@ class MainActivity : ComponentActivity() {
                     } catch (e: Exception) {
                         android.util.Log.e("MainActivity", "Auto-restore logic failed", e)
                     }
-
-                    // Trigger authoritative boot gate verification
-                    viewModel.verifyCloudStateAndReleaseGate(applicationContext)
 
                     // Auto-sync Pull (Restore) and then Push (Backup) when app opened
                     if (com.example.util.GoogleDriveSyncManager.hasDrivePermission(applicationContext)) {
