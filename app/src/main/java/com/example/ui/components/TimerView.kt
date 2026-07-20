@@ -257,6 +257,9 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     val allUsers by viewModel.allUsers.collectAsStateWithLifecycle()
     val currentUsername by viewModel.currentUsername.collectAsStateWithLifecycle()
     val userEmail by viewModel.userEmail.collectAsStateWithLifecycle()
+    val healthRecords by viewModel.healthRecordsList.collectAsStateWithLifecycle(initialValue = emptyList())
+
+    val prefs = remember(context) { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
 
     // Dynamically calculate focus metrics
     val completedTodaySecs = remember(focusRecords, allUsers, userEmail, currentUsername) {
@@ -285,29 +288,49 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
         pendingFocusReview?.let { com.example.util.FocusTimerManager.getOverlapSecondsForDate(it, systemTodayStr) } ?: 0
     }
 
-    val globalTodaySeconds = remember(completedTodaySecs, pendingSecs, isFocusPhase, cumulativeSessionFocusSeconds, stopwatchSeconds, pendingFocusReview) {
-        val systemTodayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+    val optimisticTodaySecs = viewModel.optimisticTodayFocusSeconds.collectAsState().value
+    val globalTodaySeconds = remember(completedTodaySecs, pendingSecs, isFocusPhase, cumulativeSessionFocusSeconds, stopwatchSeconds, pendingFocusReview, optimisticTodaySecs) {
         val activeSecs = if (isFocusPhase && pendingFocusReview == null) {
             cumulativeSessionFocusSeconds + stopwatchSeconds
         } else {
             0
         }
-        completedTodaySecs + pendingSecs + activeSecs
+        val base = completedTodaySecs + pendingSecs + activeSecs
+        if (optimisticTodaySecs != null) {
+            maxOf(base, optimisticTodaySecs.toInt())
+        } else {
+            base
+        }
     }
 
     val leaderboard by com.example.api.ArenaLeaderboardEngine.leaderboardFlow.collectAsStateWithLifecycle(emptyList())
     val myLeaderboardPeer = remember(leaderboard) {
         leaderboard.find { it.isMe }
     }
-    val myXp = remember(globalTodaySeconds, myLeaderboardPeer) {
-        val baseServerXp = myLeaderboardPeer?.xpScore ?: 0
-        baseServerXp + (globalTodaySeconds * 1000L / 60000L / 15L).toInt()
+
+    // Keep track of last non-zero baseServerXp to avoid flickering when changing tabs/loading leaderboard
+    var lastKnownBaseServerXp by remember { mutableStateOf(prefs.getInt("last_base_server_xp", 0)) }
+    LaunchedEffect(myLeaderboardPeer) {
+        myLeaderboardPeer?.xpScore?.let {
+            if (it > 0) {
+                lastKnownBaseServerXp = it
+                prefs.edit().putInt("last_base_server_xp", it).apply()
+            }
+        }
     }
-    val sleepMinutes = 8 * 60 // 8 hours of sleep by default
+
+    val myXp = remember(globalTodaySeconds, lastKnownBaseServerXp) {
+        lastKnownBaseServerXp + (globalTodaySeconds * 1000L / 60000L / 15L).toInt()
+    }
+
+    val todayStr = remember { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date()) }
+    val sleepMinutes = remember(healthRecords, todayStr) {
+        healthRecords.find { it.dateString == todayStr }?.sleepMinutes ?: 0
+    }
     val calendar = java.util.Calendar.getInstance()
     val currentLocalTimeMins = calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 + calendar.get(java.util.Calendar.MINUTE)
     
-    val wastedMins = remember(globalTodaySeconds, currentLocalTimeMins) {
+    val wastedMins = remember(globalTodaySeconds, currentLocalTimeMins, sleepMinutes) {
         val focusedMins = globalTodaySeconds / 60
         (currentLocalTimeMins - focusedMins - sleepMinutes).coerceAtLeast(0)
     }
@@ -632,7 +655,8 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                 if (targetHistory) {
                     TimerHistoryView(
                         viewModel = viewModel,
-                        selectedDateStr = selectedDateStr
+                        selectedDateStr = selectedDateStr,
+                        globalTodaySeconds = globalTodaySeconds
                     )
                 } else {
                     TimerLiveControlContent(
@@ -642,7 +666,8 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                         isAntiBurnCenteredByTap = true,
                         globalTodaySeconds = globalTodaySeconds,
                         focusTimerDurationMins = focusTimerDurationMins,
-                        myXp = myXp
+                        myXp = myXp,
+                        wastedMins = wastedMins
                     )
                 }
             }
@@ -3062,6 +3087,7 @@ fun formatRecordDuration(durationSeconds: Int, durationMinutes: Int): String {
 fun TimerHistoryView(
     viewModel: AppViewModel,
     selectedDateStr: String,
+    globalTodaySeconds: Int,
     modifier: Modifier = Modifier
 ) {
     // State for editing focus session logs
@@ -3117,18 +3143,11 @@ fun TimerHistoryView(
     }
 
     val todayStr = remember { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date()) }
-    val optimisticTodaySecs = viewModel.optimisticTodayFocusSeconds.collectAsState().value
-    val myTodaySeconds = remember(completedSecs, pendingSecs, selectedDateStr, isFocusPhase, pendingFocusReview, cumulativeSessionFocusSeconds, stopwatchSeconds, optimisticTodaySecs, todayStr) {
-        val activeSecs = if (isFocusPhase && pendingFocusReview == null && selectedDateStr == todayStr) {
-            cumulativeSessionFocusSeconds + stopwatchSeconds
+    val myTodaySeconds = remember(completedSecs, pendingSecs, selectedDateStr, todayStr, globalTodaySeconds) {
+        if (selectedDateStr == todayStr) {
+            globalTodaySeconds
         } else {
-            0
-        }
-        val base = completedSecs + pendingSecs + activeSecs
-        if (optimisticTodaySecs != null && selectedDateStr == todayStr) {
-            maxOf(base, optimisticTodaySecs.toInt())
-        } else {
-            base
+            completedSecs + pendingSecs
         }
     }
 
@@ -3383,11 +3402,7 @@ fun TimerHistoryView(
                                             editor.putBoolean("is_command_device", isChecked).apply()
                                             val userEmail = com.example.api.DynamicCommandManager.activeEmail
                                             if (userEmail.isNotEmpty()) {
-                                                if (!isChecked) {
-                                                    com.example.api.DynamicCommandManager.startListeningToActiveFocusTimer(context, userEmail)
-                                                } else {
-                                                    com.example.api.DynamicCommandManager.stopListeningToActiveFocusTimer()
-                                                }
+                                                com.example.api.DynamicCommandManager.startListeningToActiveFocusTimer(context, userEmail)
                                             }
                                         },
                                         colors = SwitchDefaults.colors(
@@ -4940,19 +4955,12 @@ fun TimerLiveControlContent(
     globalTodaySeconds: Int,
     focusTimerDurationMins: Int,
     myXp: Int,
+    wastedMins: Int,
     modifier: Modifier = Modifier
 ) {
     val WaterBlue = Color(0xFF38BDF8)
 
     val pendingFocusReview by viewModel.pendingFocusReview.collectAsStateWithLifecycle()
-
-    val sleepMinutes = 8 * 60
-    val calendar = java.util.Calendar.getInstance()
-    val currentLocalTimeMins = calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 + calendar.get(java.util.Calendar.MINUTE)
-    val wastedMins = remember(globalTodaySeconds, currentLocalTimeMins) {
-        val focusedMins = globalTodaySeconds / 60
-        (currentLocalTimeMins - focusedMins - sleepMinutes).coerceAtLeast(0)
-    }
 
     val isTimerActive by viewModel.isTimerRunning.collectAsStateWithLifecycle()
     val timerSecondsRemaining by viewModel.timerSecondsLeft.collectAsStateWithLifecycle()
@@ -5895,7 +5903,9 @@ fun LiveControlTimerBar(
     focusTimerDurationMins: Int,
     cumulativeSessionFocusSeconds: Int,
     globalTodaySeconds: Int,
-    WaterBlue: Color
+    WaterBlue: Color,
+    myXp: Int = 0,
+    wastedMins: Int = 0
 ) {
     val selectedTag by viewModel.attachedTag.collectAsState()
 
@@ -5956,35 +5966,6 @@ fun LiveControlTimerBar(
         }
     } else {
         if (sessionStartTimestamp == null && timerSecondsRemaining == focusTimerDurationMins * 60) {
-            val context = LocalContext.current
-            val userEmail by viewModel.userEmail.collectAsStateWithLifecycle()
-            val currentMeEmail = remember(userEmail) { userEmail.lowercase().trim() }
-            val leaderboard by com.example.api.ArenaLeaderboardEngine.leaderboardFlow.collectAsStateWithLifecycle(emptyList())
-            val myLeaderboardPeer = remember(leaderboard, currentMeEmail) {
-                leaderboard.find { it.email.lowercase().trim() == currentMeEmail }
-            }
-            val historyRecords by viewModel.allHistoryVault.collectAsStateWithLifecycle(initialValue = emptyList())
-            val activeStreak = remember(historyRecords, myLeaderboardPeer) {
-                val myLocalStreak = com.example.api.AnalyticsVaultEngine.calculateDailyConsistencyStreak(context, historyRecords)
-                if (myLocalStreak > 0) myLocalStreak else (myLeaderboardPeer?.activeStreak ?: 0)
-            }
-            val isFocusPhase by viewModel.isFocusPhase.collectAsStateWithLifecycle()
-            val isStopwatchActive by viewModel.isStopwatchActive.collectAsStateWithLifecycle()
-            val stopwatchSeconds by viewModel.stopwatchSeconds.collectAsStateWithLifecycle()
-            val pendingFocusReview by viewModel.pendingFocusReview.collectAsStateWithLifecycle()
-
-            val myXp = remember(globalTodaySeconds, leaderboard, myLeaderboardPeer) {
-                val baseServerXp = myLeaderboardPeer?.xpScore ?: 0
-                baseServerXp + (globalTodaySeconds * 1000L / 60000L / 15L).toInt()
-            }
-            val sleepMinutes = 8 * 60
-            val calendar = java.util.Calendar.getInstance()
-            val currentLocalTimeMins = calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 + calendar.get(java.util.Calendar.MINUTE)
-            val wastedMins = remember(globalTodaySeconds, currentLocalTimeMins) {
-                val focusedMins = globalTodaySeconds / 60
-                (currentLocalTimeMins - focusedMins - sleepMinutes).coerceAtLeast(0)
-            }
-
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -6163,7 +6144,9 @@ fun LiveControlStopwatchBar(
     sessionStartTimestamp: Long?,
     stopwatchSeconds: Int,
     globalTodaySeconds: Int,
-    WaterBlue: Color
+    WaterBlue: Color,
+    myXp: Int = 0,
+    wastedMins: Int = 0
 ) {
     val selectedTag by viewModel.attachedTag.collectAsState()
 
@@ -6224,37 +6207,6 @@ fun LiveControlStopwatchBar(
         }
     } else {
         if (sessionStartTimestamp == null && stopwatchSeconds == 0) {
-            val context = LocalContext.current
-            val userEmail by viewModel.userEmail.collectAsStateWithLifecycle()
-            val currentMeEmail = remember(userEmail) { userEmail.lowercase().trim() }
-            val leaderboard by com.example.api.ArenaLeaderboardEngine.leaderboardFlow.collectAsStateWithLifecycle(emptyList())
-            val myLeaderboardPeer = remember(leaderboard, currentMeEmail) {
-                leaderboard.find { it.email.lowercase().trim() == currentMeEmail }
-            }
-            val historyRecords by viewModel.allHistoryVault.collectAsStateWithLifecycle(initialValue = emptyList())
-            val activeStreak = remember(historyRecords, myLeaderboardPeer) {
-                val myLocalStreak = com.example.api.AnalyticsVaultEngine.calculateDailyConsistencyStreak(context, historyRecords)
-                if (myLocalStreak > 0) myLocalStreak else (myLeaderboardPeer?.activeStreak ?: 0)
-            }
-            val isFocusPhase by viewModel.isFocusPhase.collectAsStateWithLifecycle()
-            val isStopwatchActive by viewModel.isStopwatchActive.collectAsStateWithLifecycle()
-            val stopwatchSeconds by viewModel.stopwatchSeconds.collectAsStateWithLifecycle()
-            val pendingFocusReview by viewModel.pendingFocusReview.collectAsStateWithLifecycle()
-            val isTimerActive by viewModel.isTimerRunning.collectAsStateWithLifecycle()
-            val cumulativeSessionFocusSeconds by viewModel.cumulativeSessionFocusSeconds.collectAsStateWithLifecycle()
-
-            val myXp = remember(globalTodaySeconds, leaderboard, myLeaderboardPeer) {
-                val baseServerXp = myLeaderboardPeer?.xpScore ?: 0
-                baseServerXp + (globalTodaySeconds * 1000L / 60000L / 15L).toInt()
-            }
-            val sleepMinutes = 8 * 60
-            val calendar = java.util.Calendar.getInstance()
-            val currentLocalTimeMins = calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 + calendar.get(java.util.Calendar.MINUTE)
-            val wastedMins = remember(globalTodaySeconds, currentLocalTimeMins) {
-                val focusedMins = globalTodaySeconds / 60
-                (currentLocalTimeMins - focusedMins - sleepMinutes).coerceAtLeast(0)
-            }
-
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,

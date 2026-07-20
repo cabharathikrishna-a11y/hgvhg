@@ -143,11 +143,16 @@ object SessionTerminator {
 
                 val shrinkPayload = mapOf(
                     "Status" to "IDLE",
-                    "Command_Device_Name" to "None"
+                    "Command_Device_Name" to "None",
+                    "Timer_Mode" to null,
+                    "Session_ID" to null,
+                    "Current_Task" to null,
+                    "Current_Tag" to null,
+                    "Timeline" to null
                 )
 
-                // Overwrite exactly
-                activeRef.setValue(shrinkPayload)
+                // Update children to preserve User_Emoji, User_Display_Name, etc.
+                activeRef.updateChildren(shrinkPayload)
                 Log.d(TAG, "Successfully shrank active RTDB node to Relaxing status.")
             } catch (e: Exception) {
                 Log.e(TAG, "Error shrinking active focus timer in RTDB", e)
